@@ -8,7 +8,8 @@ class BaseEmulator:
     '''
     def __init__(self):
         return
-
+    def __str__(self):
+        return 
     def fit(self,X,Y):
         raise NotImplementedError()
     def predict(self):
@@ -56,3 +57,6 @@ class crnGPEmulator(_hetGPyEmulator):
     def __init__(self,covtype="Gaussian", lower=None, upper=None, known={}, init={}):
         super().__init__(covtype, lower, upper, known, init)
         self.base_model = crnGP
+    def __str__(self):
+        super().__str__()
+        return 'crnGP'

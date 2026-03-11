@@ -31,6 +31,7 @@ class Dataset:
         else:
             self.data = pd.DataFrame(X,columns=[f"x{i}" for i in range(X.shape[1])])
             self.xcols = self.data.columns.tolist()
+        self.data['sim_id'] = range(1,len(self.data)+1)
         self.data['Y_native'] = Y.copy()
         y= self.transform(Y,save_stats = True)
         self.data['Y'] = y 

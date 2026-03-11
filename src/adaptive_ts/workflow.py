@@ -48,6 +48,17 @@ class Workflow:
         self.emulator = emulator
         self.grid_strategy = grid_strategy
         self.budget = budget
+        self.pars = {'budget':budget,
+                    'emulator':emulator.__str__(),
+                    'grid_strategy':grid_strategy.__str__()
+        }
+        # save pars
+        for key,value in self.emulator.__dict__.items():
+            if isinstance(value,str) or isinstance(value,float) or isinstance(value,int):
+                self.pars[key] = value
+        for key,value in self.grid_strategy.__dict__.items():
+            if isinstance(value,str) or isinstance(value,float) or isinstance(value,int):
+                self.pars[key] = value
         return
     
     def fit_surrogate(self,X,Y):
