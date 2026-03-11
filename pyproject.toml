@@ -1,0 +1,24 @@
+[project]
+name = "adaptive_ts"
+version = "0.0.1"
+authors = [
+  { name="David O'Gara", email="dogara@anl.gov" },
+]
+description = "Adaptive Emulation and Thompson Sampling"
+readme = "README.md"
+requires-python = ">=3.9"
+
+dependencies = [
+    "numpy",
+    "hetgpy@git+https://github.com/davidogara/hetGPy.git@crn",
+    "matplotlib",
+    "pandas"
+]
+
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "MIT"
+license-files = ["LICEN[CS]E*"]
