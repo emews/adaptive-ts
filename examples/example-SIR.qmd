@@ -12,31 +12,145 @@ ytrue = ground_truth['n_SI'].values
 batch = run_batch(X,ytrue=ytrue)
 Y = batch['Y']
 sims = batch['sims']
+
+X0, Y0 = X.copy(), Y.copy()
 ```
 
 ```{python}
+import pandas as pd
 from adaptive_ts.workflow import Workflow
 from adaptive_ts.emulator import crnGPEmulator
-from adaptive_ts.grid import AdaptiveGridStrategy
+from adaptive_ts.grid import (AdaptiveGridStrategy, 
+                                LatinHypercubeStrategy,
+                                NormalizingFlowStrategy)
 from adaptive_ts.dataset import Dataset
-workflow = Workflow(
-    emulator = crnGPEmulator(covtype="Matern5_2"),
-    grid_strategy = AdaptiveGridStrategy(
-        ndim=2,nseeds=5,ngrid=100,
-        ref=-2, ref_sig=0.2,prop_sig=0.2, nTS_samp=30, rng = rng,
-    ),
-    budget=500
+from adaptive_ts import io
+PARS = {
+    'ndim': 2, 'nseeds': 5, 'ngrid': 100,
+    'ref': -2, 'ref_sig': 0.4, 'prop_sig': 0.3,
+    'nTS_samp': 30, 'rng': rng
+}
+lhs_strategy = LatinHypercubeStrategy(
+    ndim = PARS['ndim'],
+    nseeds = PARS['nseeds'],
+    ngrid = PARS['ngrid'],
+    nTS_samp = PARS['nTS_samp'],
+    rng = PARS['rng']
+)
+adapt_strategy = AdaptiveGridStrategy(
+    ndim = PARS['ndim'],
+    nseeds = PARS['nseeds'],
+    ngrid = PARS['ngrid'],
+    ref = PARS['ref'], 
+    ref_sig = PARS['ref_sig'],
+    prop_sig = PARS['prop_sig'], 
+    nTS_samp = PARS['nTS_samp'], 
+    rng = PARS['rng']
 )
 
-nsims = len(Y)
-data = Dataset(X=X,Y=Y)
-while nsims < workflow.budget:
-    model = workflow.fit_surrogate(X,Y)
-    newX = workflow.sample_grid_strategy()
-    newY = run_batch(newX,ytrue=ytrue)
-    data.append(X=newX,Y=newY)
-    nsims += len(newY)
+nn_strategy = NormalizingFlowStrategy(
+    ndim = PARS['ndim'],
+    nseeds = PARS['nseeds'],
+    ngrid = PARS['ngrid'],
+    ref = PARS['ref'],
+    ref_sig = PARS['ref_sig'],
+    nTS_samp = PARS['nTS_samp'],
+    rng = PARS['rng']
+)
+
+def run_workflow_by_strategy(strategy,strategy_name,save=True):
+    workflow = Workflow(
+        emulator = crnGPEmulator(
+            covtype="Matern5_2"
+        ),
+        grid_strategy = strategy,
+        budget=200
+    )
+
+    nsims = len(Y0)
+    data = Dataset(X=X0,Y=Y0)
+    all_sims = []
+    while nsims < workflow.budget:
+        sim_id_max = data.data['sim_id'].max()
+        X, Y = data.X, data.Y
+        workflow.fit_surrogate(X,Y)
+        newX = workflow.sample_grid_strategy()
+        new_out = run_batch(newX,ytrue=ytrue)
+        
+        sims = new_out['sims']
+        sims['sim_id'] += sim_id_max
+        newY = new_out['Y']
+        nsims += len(newY)
+        
+        data.append(X=newX,Y=newY)
+        all_sims.append(sims)
+
+    all_sims = pd.concat(all_sims)
+    output = data.data.copy()
+    output['experiment'] = strategy_name
+    output['bov'] = np.minimum.accumulate(output['Y'].values)
+    pars = pd.DataFrame([workflow.pars])
+    # save results
+    if save:
+        conn_path = f"{strategy_name}.sqlite"
+        io.save_sql(output,'results',conn_path,if_exists='replace')
+        io.save_sql(all_sims,'sims',conn_path,if_exists='replace')
+        io.save_sql(pars,'pars',conn_path,if_exists='replace')
+
+    return output
+
+results = pd.concat(
+    [
+        run_workflow_by_strategy(lhs_strategy,'lhs',save=True),
+        run_workflow_by_strategy(adapt_strategy,'adaptive',save=True),
+        run_workflow_by_strategy(nn_strategy,'normalizing_flow',save=True)
+]
+)
+results
+
+```
 
 
-data
+```{python}
+import pandas as pd
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots()
+for exp_name, data in results.groupby('experiment'):
+    ax.plot(data['sim_id'].values,data['bov'].values,label=exp_name)
+
+fig.legend(ncols = 3,edgecolor='black',loc='upper center');
+ax.set_xlabel('Simulation Number')
+ax.set_ylabel('Best Observed Value')
+results['rmse'] = (results['Y_native'] / 100) ** 0.5
+
+buckets = [15,20,25,30]
+results_rmse = []
+
+for experiment, data in results.groupby('experiment'):
+    for bucket in buckets:
+        prop = (data['rmse'] < bucket).mean()
+        results_rmse.append(
+            {'experiment':experiment,
+            'cutoff':bucket,
+            'prop':prop}
+        )
+
+results_rmse = pd.DataFrame(results_rmse).pivot_table(
+    index='cutoff',
+    columns='experiment',
+    values='prop').reset_index()
+results_rmse.plot.bar(y=sorted(results['experiment'].unique()),x='cutoff')
+
+```
+
+```{python}
+
+# plot parameters
+fig, ax = plt.subplots(figsize=(6,4))
+for experiment, data in results.groupby('experiment'):
+    ax.scatter(x=data['x0'],y=data['x1'],label=experiment)
+ax.legend(edgecolor='black');
+ax.set_xlabel('beta')
+ax.set_ylabel('gamma')
 ```
