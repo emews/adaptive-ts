@@ -16,7 +16,19 @@ class Dataset:
     '''
     Basic class to manage data handling for adaptive workflow. Essentially a dataframe (self.data) with some commands for appending 
     '''
-    def __init__(self,X,Y,check_seed = False, transform = None):
+    def __init__(self,X: np.ndarray, Y: np.ndarray,check_seed: bool = False, transform: callable | None = None):
+        r'''
+        Parameters
+        ----------
+        X: np.ndarray 
+            np.ndarray nxd matrix of model inputs
+        Y: np.ndarray
+            np.ndarray of length n of simulation outputs
+        check_seed: bool
+            boolean (default true) to check whether last column is seed and coercible to integer
+        transform: callable | None
+            callable to transform Y upon input. By default, take log and standardize (Y = (log(Y) - mean(log(Y))) / std(log(Y)))
+        '''
         self.ym = None
         self.ystd = None
 
@@ -57,6 +69,22 @@ class Dataset:
         y = (y - self.ym) / self.ystd  
         return y
     def append(self,X,Y,add_sim_id = True):
+        r'''
+        Add new observations to the dataset, and optionally add simulation id. Uses same transform as base dataset
+
+        Parameters
+        ----------
+        X: np.ndarray
+            np.ndarray of model inputs with n rows and d columns, corresponding to model parameters
+        Y: np.ndarray
+            np.ndarray of model output (must be same length as Y)
+        add_sim_id: bool
+            boolean for adding simulation id (default True)
+        
+        Returns
+        -------
+        None, but self.data, self.X, self.Y are updated    
+        '''
         df = pd.DataFrame(X,columns=self.xcols)
         df['Y_native'] = Y
         df['Y'] = self.transform(Y)
