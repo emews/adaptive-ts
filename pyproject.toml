@@ -10,10 +10,14 @@ requires-python = ">=3.9"
 
 dependencies = [
     "numpy",
-    "hetgpy@git+https://github.com/davidogara/hetGPy.git@crn",
+    "hetgpy@git+https://github.com/davidogara/hetGPy.git@main",
     "matplotlib",
-    "pandas"
+    "pandas",
+    "scikit-learn"
 ]
+
+
+
 
 
 classifiers = [

@@ -16,7 +16,7 @@ class Dataset:
     '''
     Basic class to manage data handling for adaptive workflow. Essentially a dataframe (self.data) with some commands for appending 
     '''
-    def __init__(self,X: np.ndarray, Y: np.ndarray,check_seed: bool = False, transform: callable | None = None):
+    def __init__(self,X: np.ndarray, Y: np.ndarray,check_seed: bool = False, transform: callable = None):
         r'''
         Parameters
         ----------

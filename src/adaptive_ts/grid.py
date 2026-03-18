@@ -15,18 +15,31 @@ from nflows.transforms import CompositeTransform, MaskedAffineAutoregressiveTran
 
 
 class BaseGridStrategy:
-    def __init__(self, ndim:int = None, nseeds:int = None, rng = None):
+    r'''
+    Base class for grid strategy. Defines an __init__, __str__, and sample method 
+    '''
+    def __init__(self, ndim:int = None, nseeds:int = None, rng: np.random.Generator | int | None = None):
+        r'''
+        Minimal parameters needed for a grid strategy.
+
+        Parameters
+        ----------
+        ndim: int 
+            number of continuous parameters
+        nseeds: int
+            number of random seeds
+        rng: np.random.Generator
+            numpy random number generator or integer to seed the generator. If None, the current time is used as the seed
+
+        '''
         self.ndim = ndim
         self.nseeds = nseeds
 
         # validate random number generator
-        if rng is None:
-            seed = time()
-            rng = np.random.default_rng(seed)
-        if isinstance(rng,int):
-            rng = np.random.default_rng(seed)
-        elif isinstance(rng,np.random.Generator):
+        if rng is None or isinstance(rng,np.random.Generator):
             pass
+        elif isinstance(rng,int):
+            rng = np.random.default_rng(rng)
         else:
             raise ValueError('rng must be either int or numpy.random.Generator')
         self.rng = rng
@@ -38,8 +51,13 @@ class BaseGridStrategy:
         raise NotImplementedError()
 
 class FixedGridStrategy(BaseGridStrategy):
-    def __init__(self,ndim: int = None,nseeds:int = None, rng = None):
+    r'''
+    Fixed grid (non-adaptive) strategy. 
+    '''
+    def __init__(self,ndim: int = None,nseeds:int = None, rng = None,Xgrid = None):
         super().__init__(ndim=ndim, nseeds=nseeds, rng=rng)
+        if Xgrid is not None:
+            self.Xgrid = Xgrid
     def __str__(self):
         super().__str__()
         return 'FixedGrid'
@@ -64,7 +82,10 @@ class LatinHypercubeStrategy(BaseGridStrategy):
         return 'LHSGrid'
     def sample(self,model):
         X = self.lhs.random(self.ngrid)
-        seeds = (np.arange(self.nseeds)+1).reshape(-1,1)
+        if self.nseeds is not None:
+            seeds = (np.arange(self.nseeds)+1).reshape(-1,1)
+        else:
+            seeds = None
         self.Xgrid = make_grid(X,seeds)
         # Thompson samples
         tTS = model.sample(self.Xgrid,size=self.nTS_samp)
@@ -96,7 +117,10 @@ class AdaptiveGridStrategy(BaseGridStrategy):
 
         # generate LHS
         X = self.lhs.random(n_grid)
-        seeds = (np.arange(self.nseeds)+1).reshape(-1,1)
+        if self.nseeds is not None:
+            seeds = (np.arange(self.nseeds)+1).reshape(-1,1)
+        else:
+            seeds = None
         self.Xgrid = make_grid(X,seeds)
         # do importance sample
         w = loglik_design(model=model,newX=self.Xgrid,ytrue=ref,err_sig=ref_sig)    
@@ -127,7 +151,8 @@ class AdaptiveGridStrategy(BaseGridStrategy):
                     if len(selected_ids)>0:
                         selected_id = sorted(self.rng.choice(selected_ids,size=np.ceil(len(selected_ids)/2).astype(int)))[0]
                         Xgrid_new.append(xs_can_mat[selected_id,:])
-
+        if len(Xgrid_new) == 0:
+            Xgrid_new = self.Xgrid[self.rng.choice(len(self.Xgrid)),:].reshape(-1,self.Xgrid.shape[1])
         self.Xgrid = np.array(Xgrid_new)
     
         # Thompson samples
@@ -166,22 +191,25 @@ class NormalizingFlowStrategy(BaseGridStrategy):
             dataframe with sampled outputs (and seeds)
 
         '''
-        seed = self.rng.integers(low=1,high=100_000)
-        torch.manual_seed(seed)
+        rand_seed = self.rng.integers(low=1,high=100_000)
+        torch.manual_seed(rand_seed)
         # Load samples
         weights = df["weight"].values
-        r_data = pd.Categorical(df["r"].astype(int),categories=seeds)
         x_columns = [c for c in df.columns if c not in ["r", "weight"]]
-
-        # Logit-transform x (maps [0,1] -> R)
         x_data = df[x_columns].to_numpy()
+        # Logit-transform x (maps [0,1] -> R)
         x_data = logit(x_data)
-
-        # One-hot encode r
-        r_onehot = pd.get_dummies(r_data).to_numpy()
-
-        # Combine features
-        x_cond = np.hstack([x_data, r_onehot])
+        if seeds is not None:
+            # One-hot encode r
+            seeds = seeds.squeeze()
+            r_data = pd.Categorical(df["r"].astype(int),categories=seeds)
+            r_onehot = pd.get_dummies(r_data).to_numpy()
+            # Combine features
+            x_cond = np.hstack([x_data, r_onehot])
+        else:
+            # ignore seed and just use continuous pars
+            x_cond = x_data.copy()
+        
         x_tensor = torch.tensor(x_cond, dtype=torch.float64)
         w_tensor = torch.tensor(weights / np.sum(weights), dtype=torch.float64)
 
@@ -210,17 +238,19 @@ class NormalizingFlowStrategy(BaseGridStrategy):
         with torch.no_grad():
             samples = flow.sample(nsamples).numpy()
 
+        
         # Split x and r back
         n_x = len(x_columns)
-        x_samples = inv_logit(samples[:, :n_x])  # map back to [0,1]
+        x_samples = inv_logit(samples[:, :x_data.shape[1]])  # map back to [0,1]
 
-        r_cols = [col for col in pd.get_dummies(r_data).columns]
-        r_indices = samples[:, n_x:].argmax(axis=1)
-        r_decoded = [r_cols[i] for i in r_indices]
-
+        
         # Save output
         out_df = pd.DataFrame(x_samples, columns=x_columns)
-        out_df["r"] = r_decoded
+        if seeds is not None:
+            r_cols = [col for col in pd.get_dummies(r_data).columns]
+            r_indices = samples[:, n_x:].argmax(axis=1)
+            r_decoded = [r_cols[i] for i in r_indices]
+            out_df["r"] = r_decoded
 
         del flow
         del optimizer
@@ -234,7 +264,10 @@ class NormalizingFlowStrategy(BaseGridStrategy):
 
         # generate LHS
         X = self.lhs.random(n_grid)
-        seeds = (np.arange(self.nseeds)+1).reshape(-1,1)
+        if self.nseeds is not None:
+            seeds = (np.arange(self.nseeds)+1).reshape(-1,1)
+        else:
+            seeds = None
         self.Xgrid = make_grid(X,seeds)
         # do importance sample
         w = loglik_design(model=model,newX=self.Xgrid,ytrue=ref,err_sig=ref_sig)    
@@ -247,7 +280,8 @@ class NormalizingFlowStrategy(BaseGridStrategy):
         grid_ids = self.rng.choice(self.Xgrid.shape[0],size=self.Xgrid.shape[0],p=w_norm, replace=True)
         grid_ids = np.unique(grid_ids)
         cols = [f'x{i+1}' for i in range(self.ndim)]
-        cols.append('r')
+        if seeds is not None:
+            cols.append('r')
         grid_df = pd.DataFrame(self.Xgrid[grid_ids,:],columns=cols)
         w_filtered = w[grid_ids]
 
@@ -255,7 +289,7 @@ class NormalizingFlowStrategy(BaseGridStrategy):
         w_norm  = np.exp(w_prime) / np.sum(np.exp(w_prime))
         grid_df['weight'] = w_norm
 
-        generated_df = self._train_flow(grid_df,nsamples=1_000,seeds = seeds.squeeze())
+        generated_df = self._train_flow(grid_df,nsamples=1_000,seeds = seeds)
         self.Xgrid = generated_df.values
 
 
@@ -263,3 +297,14 @@ class NormalizingFlowStrategy(BaseGridStrategy):
         best_ids = np.argmin(tTS,axis=1)
         best_ids = np.unique(best_ids,axis=0)
         return self.Xgrid[best_ids,:]
+    
+
+
+
+
+    
+    
+    
+    
+
+

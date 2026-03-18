@@ -34,24 +34,49 @@ while nsims < workflow.budget:
 
 from adaptive_ts.emulator import BaseEmulator
 from adaptive_ts.grid import BaseGridStrategy
+from adaptive_ts.expansion import BaseSeedExpansion
+import numpy as np
+from time import time
 
 def _validate_input(name,workflow_input,workflow_expected):
     if not isinstance(workflow_input,workflow_expected):
         raise ValueError(f"{name} is not valid, got {type(workflow_input)} , expected input or inheritance of type {workflow_expected}")
 
 class Workflow:
-    def __init__(self,emulator,grid_strategy,seed_expansion_strategy = None,budget = 200):
+    def __init__(self,emulator,grid_strategy,seed_expansion_strategy = None,budget = 200, rng = None):
         # validate emulator
         _validate_input('emulator',emulator,BaseEmulator)
         _validate_input('grid_stategy',grid_strategy,BaseGridStrategy)
+        _validate_input('seed_expansion',seed_expansion_strategy,BaseSeedExpansion)
+        if rng is None:
+            seed = time()
+            rng = np.random.default_rng(seed)
+        if isinstance(rng,int):
+            rng = np.random.default_rng(seed)
+        elif isinstance(rng,np.random.Generator):
+            pass
+        else:
+            raise ValueError('rng must be either int or numpy.random.Generator')
+        self.rng = rng
+        # setup rng
+        if emulator.rng is None:
+            emulator.rng = self.rng
+        if grid_strategy.rng is None:
+            grid_strategy.rng = self.rng
+        if seed_expansion_strategy.rng is None:
+            seed_expansion_strategy.rng = self.rng
+
 
         self.emulator = emulator
         self.grid_strategy = grid_strategy
+        self.seed_expansion_strategy = seed_expansion_strategy
         self.budget = budget
         self.pars = {'budget':budget,
                     'emulator':emulator.__str__(),
-                    'grid_strategy':grid_strategy.__str__()
+                    'grid_strategy':grid_strategy.__str__(),
+                    'seed_expansion': seed_expansion_strategy.__str__()
         }
+        self.nsims = 0
         # save pars
         for key,value in self.emulator.__dict__.items():
             if isinstance(value,str) or isinstance(value,float) or isinstance(value,int):
@@ -66,4 +91,16 @@ class Workflow:
         return self.emulator
     def sample_grid_strategy(self):
         newX = self.grid_strategy.sample(model=self.emulator)
+        self.nsims += len(newX)
         return newX
+    
+    def acquire(self):
+        ThompsonSampling(self.emulator, self.acquistion_strategy.nTS_samp)
+    
+    def check_for_expansion(self):
+
+        if self.seed_expansion_strategy.check_for_expansion():
+            self.seed_expansion_strategy.expand()
+            self.seed_expansion_strategy.nsims = self.nsims
+            self.grid_strategy.nseeds = self.seed_expansion_strategy.nseeds
+        

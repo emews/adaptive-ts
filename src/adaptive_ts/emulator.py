@@ -1,12 +1,17 @@
 from copy import deepcopy
 from hetgpy import crnGP
 import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process import kernels
+from sklearn.gaussian_process.kernels import RBF, Matern, RationalQuadratic, Exponentiation, ExpSineSquared
+
 
 class BaseEmulator:
     '''
     Base class to create an emulator. Requires implemening a fit, predict, and sample method
     '''
-    def __init__(self):
+    def __init__(self,rng = None):
+        self.rng = rng
         return
     def __str__(self):
         return 
@@ -16,6 +21,9 @@ class BaseEmulator:
         raise NotImplementedError()
     def sample(self):
         raise NotImplementedError()
+    def acquire(self,X):
+        tTS = self.sample(X)
+        # take the TS
     def copy(self):
         '''
         Return a copy of the model
@@ -23,6 +31,41 @@ class BaseEmulator:
         newmodel = deepcopy(self)
         return newmodel
     
+
+class GaussianProcessEmulator(BaseEmulator):
+    def __init__(self, kernel: kernels):
+        super().__init__()
+        self.kernel = kernel
+        self.model = GaussianProcessRegressor(kernel=kernel)
+    def fit(self,X,Y):
+        # sklearn Gaussian Process ignores seed information
+        if (X[:,-1] == X[:,-1].astype(int)).all():
+            X = X[:,0:X.shape[1]-1]
+            self.model.fit(X,Y)
+    def predict(self,X,return_cov=False):
+        if (X[:,-1] == X[:,-1].astype(int)).all():
+            X = X[:,0:X.shape[1]-1]
+        out = {}
+        if return_cov:
+            m, cov = self.model.predict(X=X,return_cov=True)
+            out['mean'] = m
+            out['cov'] = cov
+        else:
+            out['mean'] = self.model.predict(X=X)
+        return out
+    def sample(self,X,size=1):
+        preds = self.predict(X=X,return_cov=True)
+        m, cov = preds['mean'], preds['cov']
+        cov = 0.5 * (cov + cov.T)
+        eigval, eigvec = np.linalg.eigh(cov)
+        if (eigval < 0).any():
+            # threshold eigvalues to zero and re-calculate covariance matrix
+            eigval[eigval < 0] = 0
+            cov = eigvec @ np.diag(eigval) @ eigvec.T
+        return self.rng.multivariate_normal(m,cov, size = size)
+    
+
+
 class _hetGPyEmulator(BaseEmulator):
     r'''
     Emulator wrapper for hetGPy models. Model hyperparameters (such as covariance structure, lengthscale limits, etc) must be specified at model instantiation
@@ -33,7 +76,7 @@ class _hetGPyEmulator(BaseEmulator):
         self.upper = upper
         self.known = known
         self.init = init
-
+        self.rng = None
         self.base_model = None
 
     def fit(self,X: np.ndarray,Y: np.ndarray):
@@ -97,7 +140,7 @@ class _hetGPyEmulator(BaseEmulator):
             # threshold eigvalues to zero and re-calculate covariance matrix
             eigval[eigval < 0] = 0
             cov = eigvec @ np.diag(eigval) @ eigvec.T
-        return np.random.multivariate_normal(m,cov, size = size)
+        return self.rng.multivariate_normal(m,cov, size = size)
 
 class crnGPEmulator(_hetGPyEmulator):
     r'''
