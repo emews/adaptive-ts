@@ -1,6 +1,6 @@
 from time import time
 import numpy as np
-
+from copy import deepcopy
 from scipy.stats import qmc
 from adaptive_ts.utils import make_grid, loglik, loglik_design, logit, inv_logit
 from scipy.stats import norm
@@ -49,6 +49,12 @@ class BaseGridStrategy:
         return 
     def sample(self):
         raise NotImplementedError()
+    def copy(self):
+        '''
+        Return a copy of the model
+        '''
+        newgrid = deepcopy(self)
+        return newgrid
 
 class FixedGridStrategy(BaseGridStrategy):
     r'''
@@ -163,18 +169,21 @@ class AdaptiveGridStrategy(BaseGridStrategy):
 
 
 class NormalizingFlowStrategy(BaseGridStrategy):
-    def __init__(self, ndim = None, nseeds = None, ngrid = None,ref = -3,ref_sig = 0.2, nTS_samp = 30,rng=None):
+    def __init__(self, ndim = None, nseeds = None, ngrid = None,persist = False,n_flow_steps = 100,ref = -3,ref_sig = 0.2, nTS_samp = 30,rng=None):
         super().__init__(ndim, nseeds, rng)
         self.lhs = qmc.LatinHypercube(d=self.ndim,rng=self.rng)
         self.ref = ref
         self.ref_sig = ref_sig,
         self.nTS_samp = nTS_samp
         self.n_grid = ngrid
-    
+        self.persist = persist
+        self.n_flow_steps = n_flow_steps
+        self.flow = None
+        self.optimizer = None
     def __str__(self):
         super().__str__()
         return 'NormalizingFlows'
-    def _train_flow(self,df,nsamples,seeds):
+    def _train_flow(self,df,weights,nsamples,seeds):
         r'''
         Train normalizing flow and sample from it
 
@@ -194,7 +203,6 @@ class NormalizingFlowStrategy(BaseGridStrategy):
         rand_seed = self.rng.integers(low=1,high=100_000)
         torch.manual_seed(rand_seed)
         # Load samples
-        weights = df["weight"].values
         x_columns = [c for c in df.columns if c not in ["r", "weight"]]
         x_data = df[x_columns].to_numpy()
         # Logit-transform x (maps [0,1] -> R)
@@ -223,20 +231,21 @@ class NormalizingFlowStrategy(BaseGridStrategy):
             ) for _ in range(3)
         ])
         base_dist = StandardNormal([n_features])
-        flow = Flow(transform, base_dist)
-        optimizer = torch.optim.Adam(flow.parameters(), lr=1e-3)
+        if self.flow is None:
+            self.flow = Flow(transform, base_dist)
+            self.optimizer = torch.optim.Adam(self.flow.parameters(), lr=1e-3)
 
         # Train
-        for epoch in range(100):
-            optimizer.zero_grad()
-            log_prob = flow.log_prob(inputs=x_tensor)
+        for epoch in range(self.n_flow_steps):
+            self.optimizer.zero_grad()
+            log_prob = self.flow.log_prob(inputs=x_tensor)
             loss = -(w_tensor * log_prob).sum()
             loss.backward()
-            optimizer.step()
+            self.optimizer.step()
 
         # Sample from the flow
         with torch.no_grad():
-            samples = flow.sample(nsamples).numpy()
+            samples = self.flow.sample(nsamples).numpy()
 
         
         # Split x and r back
@@ -251,10 +260,10 @@ class NormalizingFlowStrategy(BaseGridStrategy):
             r_indices = samples[:, n_x:].argmax(axis=1)
             r_decoded = [r_cols[i] for i in r_indices]
             out_df["r"] = r_decoded
-
-        del flow
-        del optimizer
-        del loss
+        if not self.persist:
+            self.flow = None
+            self.optimizer = None
+            del loss
         return out_df
     def sample(self,model):
         ref = self.ref
@@ -271,9 +280,12 @@ class NormalizingFlowStrategy(BaseGridStrategy):
         self.Xgrid = make_grid(X,seeds)
         # do importance sample
         w = loglik_design(model=model,newX=self.Xgrid,ytrue=ref,err_sig=ref_sig)    
-        w = w.squeeze()
-        w_prime = w - w.max()
-        w_norm = np.exp(w_prime) / np.sum(np.exp(w_prime))
+        if len(w.shape) == 1:
+            w = w.reshape(-1,1)
+        #w_prime = w - w.max(axis=0)
+        w_norm = np.exp(w) / np.sum(np.exp(w),axis=0,keepdims=True)
+        w_norm = w_norm.sum(axis=1)
+        w_norm /= w_norm.sum()
         w_norm = w_norm.squeeze()
 
         # filter and sample 
@@ -283,20 +295,21 @@ class NormalizingFlowStrategy(BaseGridStrategy):
         if seeds is not None:
             cols.append('r')
         grid_df = pd.DataFrame(self.Xgrid[grid_ids,:],columns=cols)
-        w_filtered = w[grid_ids]
+        w_filtered = w[grid_ids,:]
 
         w_prime = w_filtered - w_filtered.max()
-        w_norm  = np.exp(w_prime) / np.sum(np.exp(w_prime))
-        grid_df['weight'] = w_norm
-
-        generated_df = self._train_flow(grid_df,nsamples=1_000,seeds = seeds)
+        w_norm  = np.exp(w_prime) / np.sum(np.exp(w_prime),axis=0,keepdims=True)
+        w_norm = w_norm.sum(axis=1)
+        w_norm /= w_norm.sum()
+        w_norm = w_norm.squeeze()
+        generated_df = self._train_flow(grid_df,w_norm,nsamples=1_000,seeds = seeds)
         self.Xgrid = generated_df.values
 
 
-        tTS = model.sample(self.Xgrid,size=nTS_samp)
-        best_ids = np.argmin(tTS,axis=1)
-        best_ids = np.unique(best_ids,axis=0)
-        return self.Xgrid[best_ids,:]
+        #tTS = model.sample(self.Xgrid,size=nTS_samp)
+        #best_ids = np.argmin(tTS,axis=1)
+        #best_ids = np.unique(best_ids,axis=0)
+        return self.Xgrid
     
 
 
