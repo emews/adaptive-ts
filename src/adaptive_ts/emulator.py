@@ -21,9 +21,12 @@ class BaseEmulator:
         raise NotImplementedError()
     def sample(self):
         raise NotImplementedError()
-    def acquire(self,X):
-        tTS = self.sample(X)
-        # take the TS
+    def acquire(self,X,size):
+        # default Thompson sampling implementation, assumes a minimization problem
+        tTS = self.sample(X,size=size)
+        best_ids = np.argmin(tTS,axis=1)
+        best_ids = np.unique(best_ids,axis=0) 
+        return X[best_ids,:]
     def copy(self):
         '''
         Return a copy of the model
@@ -37,6 +40,8 @@ class GaussianProcessEmulator(BaseEmulator):
         super().__init__()
         self.kernel = kernel
         self.model = GaussianProcessRegressor(kernel=kernel)
+    def __str__(self):
+        return 'sklearnGP'
     def fit(self,X,Y):
         # sklearn Gaussian Process ignores seed information
         if (X[:,-1] == X[:,-1].astype(int)).all():
@@ -70,13 +75,13 @@ class _hetGPyEmulator(BaseEmulator):
     r'''
     Emulator wrapper for hetGPy models. Model hyperparameters (such as covariance structure, lengthscale limits, etc) must be specified at model instantiation
     '''
-    def __init__(self,covtype = "Gaussian", lower = None, upper = None, known = {}, init = {}):
+    def __init__(self,covtype = "Gaussian", lower = None, upper = None, known = {}, init = {}, rng = None):
         self.covtype = covtype
         self.lower = lower
         self.upper = upper
         self.known = known
         self.init = init
-        self.rng = None
+        self.rng = rng
         self.base_model = None
 
     def fit(self,X: np.ndarray,Y: np.ndarray):
@@ -146,9 +151,59 @@ class crnGPEmulator(_hetGPyEmulator):
     r'''
     Wrapper for _hetGPyEmulator that applies hetgpy.crnGP as the emulator.
     '''
-    def __init__(self,covtype="Gaussian", lower=None, upper=None, known={}, init={}):
-        super().__init__(covtype, lower, upper, known, init)
+    def __init__(self,covtype="Gaussian", lower=None, upper=None, known={}, init={},rng = None):
+        super().__init__(covtype, lower, upper, known, init,rng)
         self.base_model = crnGP
     def __str__(self):
         super().__str__()
         return 'crnGP'
+
+class MultiOutputEmulator(BaseEmulator):
+    '''
+    Emulator to model multiple outputs
+
+    **Note**
+    This model assumes independent outputs
+    '''
+    def __init__(self, base_model: BaseEmulator, rng=None):
+        super().__init__(rng)
+        self.base_model = base_model
+        self.models = []
+    def fit(self, X, Y):
+        '''fit base_model for each of the outputs'''
+        self.models = []
+        for i in range(Y.shape[1]):
+            model = self.base_model.copy()
+            if model.rng is None:
+                model.rng = self.rng
+            model.fit(X,Y[:,i])
+            self.models.append(model)
+    def predict(self,X,**kwargs):
+        nrows, ncols = len(X), len(self.models)
+        
+        preds_mean = np.full(shape = (nrows,ncols), fill_value=np.nan)
+        preds_cov = np.full(shape = (nrows,nrows,ncols),fill_value=np.nan)
+
+        for i, model in enumerate(self.models):
+            model_preds = model.predict(X,**kwargs)
+            preds_mean[:,i] = model_preds['mean']
+            preds_cov[:,:,i] = model_preds['cov']
+        return {'mean':preds_mean, 'cov': preds_cov}
+    def sample(self,X,size=1,**kwargs):
+        nrows, ncols = len(X), len(self.models)
+        samples = np.full(shape = (size,nrows,ncols),fill_value=np.nan)
+        for i, model in enumerate(self.models):
+            samples[:,:,i] = model.sample(X,size=size,**kwargs)
+        return samples
+    def acquire(self,X,size,target,transform):
+        tTS = [transform(XX) for XX in self.sample(X,size=size)]
+        idxs = []
+        for i in range(len(tTS)):
+            dists = ((tTS[i] - transform(target))**2).sum(axis=1)
+            j = dists.argmin()
+            idxs.append(j)
+        idxs = np.array(idxs)
+        idxs = np.unique(idxs,axis=0)
+        return X[idxs,:]
+
+

@@ -43,16 +43,16 @@ def _validate_input(name,workflow_input,workflow_expected):
         raise ValueError(f"{name} is not valid, got {type(workflow_input)} , expected input or inheritance of type {workflow_expected}")
 
 class Workflow:
-    def __init__(self,emulator,grid_strategy,seed_expansion_strategy = None,budget = 200, rng = None):
+    def __init__(self,emulator,grid_strategy,seed_expansion_strategy = BaseSeedExpansion(),budget = 200, rng = None):
         # validate emulator
         _validate_input('emulator',emulator,BaseEmulator)
         _validate_input('grid_stategy',grid_strategy,BaseGridStrategy)
         _validate_input('seed_expansion',seed_expansion_strategy,BaseSeedExpansion)
         if rng is None:
-            seed = time()
+            seed = int(time())
             rng = np.random.default_rng(seed)
         if isinstance(rng,int):
-            rng = np.random.default_rng(seed)
+            rng = np.random.default_rng(rng)
         elif isinstance(rng,np.random.Generator):
             pass
         else:
@@ -94,8 +94,6 @@ class Workflow:
         self.nsims += len(newX)
         return newX
     
-    def acquire(self):
-        ThompsonSampling(self.emulator, self.acquistion_strategy.nTS_samp)
     
     def check_for_expansion(self):
 
@@ -103,4 +101,8 @@ class Workflow:
             self.seed_expansion_strategy.expand()
             self.seed_expansion_strategy.nsims = self.nsims
             self.grid_strategy.nseeds = self.seed_expansion_strategy.nseeds
+    def sample_from_expansion(self):
+        ndim = self.grid_strategy.ndim
+        n = self.seed_expansion_strategy.n_expansion
+        return self.seed_expansion_strategy.sample(n=n,ndim = ndim)
         

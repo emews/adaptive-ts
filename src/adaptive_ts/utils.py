@@ -14,6 +14,7 @@ def make_grid(*args):
     -------
     np.array of cartesian product of all the entries in *args
     '''
+    args = [x for x in args if x is not None]
     return np.array(list(map(np.concatenate,list(product(*args)))))
 
 def loglik(ysim, ytrue, err_sig):
