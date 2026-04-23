@@ -23,11 +23,11 @@ class BaseSeedExpansion:
         X: np.ndarray
             refined grid of samples
         n: int
-            number of new samples (inferred from self.nexpasion if not provided)
+            number of new samples (inferred from self.nexpansion if not provided)
         ndim: int
             dimension of continuous parameters (inferred from X if not supplied)
-
         '''
+
         if n is None:
             n = self.nexpansion
         if ndim is None:
