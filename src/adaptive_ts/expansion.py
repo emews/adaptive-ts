@@ -1,11 +1,10 @@
 import numpy as np
-from scipy.stats.qmc import LatinHypercube
 from adaptive_ts.utils import make_grid
 class BaseSeedExpansion:
-    def __init__(self, nseeds: int = None,n_expansion: int = None,rng: int | np.random.Generator  = None):
+    def __init__(self, nseeds: int = None,nexpansion: int = None,rng: int | np.random.Generator  = None):
         self.nseeds = nseeds
         self.nsims = 0
-        self.n_expansion = n_expansion
+        self.nexpansion = nexpansion
         # validate random number generator
         if rng is None or isinstance(rng,np.random.Generator):
             pass
@@ -14,23 +13,33 @@ class BaseSeedExpansion:
         else:
             raise ValueError('rng must be either int or numpy.random.Generator')
         self.rng = rng
-    def sample(self,n:int = None,ndim: int = None):
+    def sample(self,X: np.ndarray, n:int = None,ndim: int = None):
         '''
-        Basic implementation of an exploratory LHS and the maximum seed
-
+        Sampled from refined grid (X) and fit a new seed to those parameters
         Usually called after self.expand()
+
+        Parameters
+        ----------
+        X: np.ndarray
+            refined grid of samples
+        n: int
+            number of new samples (inferred from self.nexpasion if not provided)
+        ndim: int
+            dimension of continuous parameters (inferred from X if not supplied)
+
         '''
         if n is None:
-            n = self.n_expansion
-        if n > 0:
-            lhs = LatinHypercube(d = ndim, rng = self.rng)  
-            max_seed = np.array(self.nseeds).reshape(1,1)
-            X = lhs.random(n=n)
-            return make_grid(X,max_seed)
+            n = self.nexpansion
+        if ndim is None:
+            ndim = X.shape[1] - 1
+         
+        max_seed = np.array(self.nseeds).reshape(1,1)
+        indices = self.rng.choice(len(X),size=n,replace=False)
+        return make_grid(X[indices,0:ndim],max_seed)
 
     def expand(self):
         self.nseeds += 1
-        seeds = (np.arange(1,self.nseeds) + 1).astype(int)
+        seeds = np.arange(1,self.nseeds + 1).astype(int)
         return seeds
             
             
