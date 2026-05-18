@@ -282,7 +282,7 @@ class NormalizingFlowStrategy(BaseGridStrategy):
         w = loglik_design(model=model,newX=self.Xgrid,ytrue=ref,err_sig=ref_sig)    
         if len(w.shape) == 1:
             w = w.reshape(-1,1)
-        #w_prime = w - w.max(axis=0)
+        w_prime = w - w.max(axis=0)
         w_norm = np.exp(w) / np.sum(np.exp(w),axis=0,keepdims=True)
         w_norm = w_norm.sum(axis=1)
         w_norm /= w_norm.sum()
@@ -302,7 +302,7 @@ class NormalizingFlowStrategy(BaseGridStrategy):
         w_norm = w_norm.sum(axis=1)
         w_norm /= w_norm.sum()
         w_norm = w_norm.squeeze()
-        generated_df = self._train_flow(grid_df,w_norm,nsamples=1_000,seeds = seeds)
+        generated_df = self._train_flow(grid_df,w_norm,nsamples=n_grid,seeds = seeds)
         self.Xgrid = generated_df.values
 
 
@@ -310,9 +310,6 @@ class NormalizingFlowStrategy(BaseGridStrategy):
         #best_ids = np.argmin(tTS,axis=1)
         #best_ids = np.unique(best_ids,axis=0)
         return self.Xgrid
-    
-
-
 
 
     
