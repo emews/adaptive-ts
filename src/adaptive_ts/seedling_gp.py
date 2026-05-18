@@ -13,6 +13,7 @@ from botorch.models.transforms.outcome import OutcomeTransform, Standardize
 from botorch.fit import fit_gpytorch_mll
 from gpytorch.mlls import ExactMarginalLogLikelihood
 # gpytorch
+import gpytorch
 from gpytorch.models import ExactGP
 from gpytorch.kernels import IndexKernel, MaternKernel, RBFKernel, ScaleKernel
 from gpytorch.means import ConstantMean
@@ -64,6 +65,8 @@ class _CategoricalSeededGPOnesDiagonal(ExactGP,GPyTorchModel):
             covar = MaternKernel(nu=2.5,active_dims=self.active_dims,ard_num_dims=ard_num_dims)
         elif covtype == 'Gaussian':
             covar = RBFKernel(active_dims=self.active_dims,ard_num_dims=ard_num_dims)
+        elif isinstance(covtype,gpytorch.kernels.Kernel):
+            covar = covtype
         self.covar_module = ScaleKernel(covar)
 
     def forward(self, x):
@@ -124,12 +127,14 @@ class SeedlingGP(BaseEmulator):
         model.eval()
         self.model = model
 
-    def predict(self,X):
+    def predict(self,X,return_cov = False):
         with torch.no_grad():
             if isinstance(X,np.ndarray):
                 X = torch.from_numpy(X)
             post = self.model.posterior(X, observation_noise=True)
-            preds = {'mean':post.mean.detach().numpy().squeeze()}
+            preds = {'mean': post.mean.detach().numpy().squeeze(),'cov':None}
+            if return_cov:
+                preds['cov'] = post.covariance_matrix.detach().numpy()
         return preds
 
     def sample(self,X,size=1):
