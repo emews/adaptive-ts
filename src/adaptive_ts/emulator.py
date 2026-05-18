@@ -118,6 +118,8 @@ class _hetGPyEmulator(BaseEmulator):
         preds: dict
             dict with mean, sd2, nugs, and xprime
         '''
+        if xprime is None:
+            xprime = X
         preds = self.model.predict(x=X,xprime=xprime)
         return preds
     def sample(self,X,size = 1):
@@ -182,12 +184,11 @@ class MultiOutputEmulator(BaseEmulator):
         nrows, ncols = len(X), len(self.models)
         
         preds_mean = np.full(shape = (nrows,ncols), fill_value=np.nan)
-        preds_cov = np.full(shape = (nrows,nrows,ncols),fill_value=np.nan)
-
+        preds_cov = []
         for i, model in enumerate(self.models):
             model_preds = model.predict(X,**kwargs)
             preds_mean[:,i] = model_preds['mean']
-            preds_cov[:,:,i] = model_preds['cov']
+            preds_cov.append(model_preds['cov'])
         return {'mean':preds_mean, 'cov': preds_cov}
     def sample(self,X,size=1,**kwargs):
         nrows, ncols = len(X), len(self.models)
@@ -199,7 +200,7 @@ class MultiOutputEmulator(BaseEmulator):
         tTS = [transform(XX) for XX in self.sample(X,size=size)]
         idxs = []
         for i in range(len(tTS)):
-            dists = ((tTS[i] - transform(target))**2).sum(axis=1)
+            dists = ((tTS[i] - target)**2).sum(axis=1)
             j = dists.argmin()
             idxs.append(j)
         idxs = np.array(idxs)
